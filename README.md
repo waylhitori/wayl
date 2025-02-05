@@ -91,4 +91,4 @@ Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting pul
 [Apache License 2.0](APACHE-LICENSE)
 
 ---
-© 2024 WAYL AI - Enterprise AI Agent Platform. All rights reserved.
+© 2025 WAYL AI - Enterprise AI Agent Platform. All rights reserved.
