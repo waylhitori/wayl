@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard - WAYL AI Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-4xl font-bold mb-8">Dashboard</h1>
+
+        <div class="bg-white p-6 rounded-lg shadow mb-8">
+            <h2 class="text-2xl font-semibold mb-4">Token Info</h2>
+            <p>Balance: {{ token_info.balance }} WAYL</p>
+            <p>Level: {{ token_info.level }}</p>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow">
+            <h2 class="text-2xl font-semibold mb-4">Your Agents</h2>
+            {% for agent in agents %}
+            <div class="border-b py-4">
+                <h3 class="text-xl">{{ agent.name }}</h3>
+                <p>Model: {{ agent.model_id }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
