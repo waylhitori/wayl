@@ -1,5 +1,5 @@
 # WAYL AI Platform 
-![WAYL AI Platform](docs/assets/images/wayl-banner.png)
+![WAYL AI Platform](/docs/assets/images/wayl-banner.png)
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
