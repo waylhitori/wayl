@@ -1,11 +1,13 @@
-# WAYL AI Platform 
-![WAYL AI Platform](/docs/assets/images/wayl-banner.png)
+![WAYL AI](/docs/assets/images/wayl-banner.png)
+
+<div align="center">
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?logo=docker&logoColor=white)](https://www.docker.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?logo=fastapi)](https://fastapi.tiangolo.com/)
 
+</div>
 Enterprise-grade AI agent platform leveraging Deepseek models with Solana blockchain integration. Create, customize, and deploy AI agents at scale.
 
 ## Key Features
