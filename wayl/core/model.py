@@ -17,7 +17,6 @@ gpu_memory_usage = Gauge('gpu_memory_usage_bytes', 'GPU memory usage')
 model_cache_size = Gauge('model_cache_size', 'Number of models in cache')
 inference_requests = Counter('model_inference_requests_total', 'Total inference requests')
 
-
 class DeepseekModel:
     def __init__(
             self,
@@ -34,34 +33,42 @@ class DeepseekModel:
         self.tokenizer: Optional[AutoTokenizer] = None
         self.last_used = datetime.utcnow()
         self._lock = asyncio.Lock()
+        self._load_task: Optional[asyncio.Task] = None
 
     async def load(self) -> None:
-        if self.model is not None:
+        if self._load_task and not self._load_task.done():
+            await self._load_task
             return
 
         async with self._lock:
-            if self.model is not None:  # Double check
+            if self.model is not None:
                 return
 
             try:
                 start_time = datetime.utcnow()
                 logger.info(f"Loading model {self.model_id}")
 
-                self.tokenizer = AutoTokenizer.from_pretrained(
-                    self.model_path,
-                    trust_remote_code=True,
-                    use_fast=True
-                )
-
-                with model_load_time.time():
-                    self.model = AutoModelForCausalLM.from_pretrained(
+                def _load_model():
+                    self.tokenizer = AutoTokenizer.from_pretrained(
                         self.model_path,
-                        device_map="auto" if self.device == "cuda" else None,
-                        torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                        max_memory=self.max_memory,
                         trust_remote_code=True,
-                        low_cpu_mem_usage=True
+                        use_fast=True
                     )
+
+                    with model_load_time.time():
+                        self.model = AutoModelForCausalLM.from_pretrained(
+                            self.model_path,
+                            device_map="auto" if self.device == "cuda" else None,
+                            torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                            max_memory=self.max_memory,
+                            trust_remote_code=True,
+                            low_cpu_mem_usage=True
+                        )
+
+                self._load_task = asyncio.create_task(
+                    asyncio.to_thread(_load_model)
+                )
+                await self._load_task
 
                 if self.device == "cuda":
                     gpu_memory_usage.set(torch.cuda.max_memory_allocated())
@@ -71,6 +78,9 @@ class DeepseekModel:
 
             except Exception as e:
                 logger.error(f"Failed to load model {self.model_id}: {str(e)}")
+                if self._load_task:
+                    self._load_task.cancel()
+                self._load_task = None
                 raise
 
     async def generate(
@@ -96,18 +106,20 @@ class DeepseekModel:
                 max_length=max_length
             ).to(self.device)
 
-            with model_inference_time.time(), torch.inference_mode():
-                outputs = await asyncio.to_thread(
-                    self.model.generate,
-                    **inputs,
-                    max_length=max_length,
-                    temperature=temperature,
-                    top_p=top_p,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    **kwargs
-                )
+            async def _generate():
+                with model_inference_time.time(), torch.inference_mode():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_length=max_length,
+                        temperature=temperature,
+                        top_p=top_p,
+                        do_sample=True,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        **kwargs
+                    )
+                return outputs
 
+            outputs = await asyncio.to_thread(_generate)
             response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
             return response.replace(full_prompt, "").strip()
 
@@ -130,31 +142,31 @@ class DeepseekModel:
         return "\n\n".join(parts)
 
     async def unload(self) -> None:
-        if self.model is not None:
-            async with self._lock:
-                if self.model is not None:
-                    del self.model
-                    self.model = None
-                    if self.device == "cuda":
-                        torch.cuda.empty_cache()
-                        gpu_memory_usage.set(torch.cuda.max_memory_allocated())
-
+        async with self._lock:
+            if self.model is not None:
+                del self.model
+                self.model = None
+                if self.device == "cuda":
+                    torch.cuda.empty_cache()
+                    gpu_memory_usage.set(torch.cuda.max_memory_allocated())
 
 class ModelManager:
     _instances: Dict[str, DeepseekModel] = {}
     _max_cache_size: int = int(os.getenv("MODEL_CACHE_SIZE", "2"))
+    _lock = asyncio.Lock()
 
     @classmethod
     async def get_model(cls, model_id: str) -> DeepseekModel:
-        if model_id not in cls._instances:
-            await cls._maybe_evict_model()
-            model_path = os.getenv(f"MODEL_PATH_{model_id}", f"deepseek-ai/{model_id}")
-            cls._instances[model_id] = DeepseekModel(model_id, model_path)
-            model_cache_size.set(len(cls._instances))
+        async with cls._lock:
+            if model_id not in cls._instances:
+                await cls._maybe_evict_model()
+                model_path = os.getenv(f"MODEL_PATH_{model_id}", f"deepseek-ai/{model_id}")
+                cls._instances[model_id] = DeepseekModel(model_id, model_path)
+                model_cache_size.set(len(cls._instances))
 
-        model = cls._instances[model_id]
-        model.last_used = datetime.utcnow()
-        return model
+            model = cls._instances[model_id]
+            model.last_used = datetime.utcnow()
+            return model
 
     @classmethod
     async def _maybe_evict_model(cls) -> None:
