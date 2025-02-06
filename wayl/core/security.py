@@ -6,17 +6,20 @@ from redis import Redis
 import secrets
 from ..config.settings import settings
 import logging
+from fastapi import HTTPException, status
+import asyncio
 
 logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
 class SecurityManager:
-    def __init__(self, redis_client: Redis):
+    def __init__(self, redis_client: Optional[Redis] = None):
         self.redis = redis_client
         self.token_blacklist_prefix = "token_blacklist:"
         self.rate_limit_prefix = "rate_limit:"
+        self._lock = asyncio.Lock()
+        self._local_storage: Dict[str, str] = {}
 
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:
         return pwd_context.verify(plain_password, hashed_password)
@@ -24,23 +27,24 @@ class SecurityManager:
     def get_password_hash(self, password: str) -> str:
         return pwd_context.hash(password)
 
-    def create_access_token(
+    async def create_access_token(
             self,
             data: Dict,
             expires_delta: Optional[timedelta] = None
     ) -> str:
         to_encode = data.copy()
-        expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+        expire = datetime.utcnow() + (
+            expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
         to_encode.update({"exp": expire})
-        token = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-
-        # Store token metadata in Redis
-        self.redis.setex(
-            f"token_meta:{token}",
-            settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            str(data.get("sub"))
+        token = jwt.encode(
+            to_encode,
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM
         )
 
+        if self.redis:
+            await self._store_token_metadata(token, data.get("sub"))
         return token
 
     async def verify_token(self, token: str) -> Optional[Dict]:
@@ -59,54 +63,89 @@ class SecurityManager:
                 return None
 
             return payload
+
         except JWTError:
             return None
 
     async def blacklist_token(self, token: str):
-        self.redis.setex(
-            f"{self.token_blacklist_prefix}{token}",
-            settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            "1"
-        )
+        async with self._lock:
+            if self.redis:
+                await self.redis.setex(
+                    f"{self.token_blacklist_prefix}{token}",
+                    settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                    "1"
+                )
+            else:
+                self._local_storage[f"{self.token_blacklist_prefix}{token}"] = "1"
 
     async def is_token_blacklisted(self, token: str) -> bool:
-        return bool(self.redis.get(f"{self.token_blacklist_prefix}{token}"))
+        if self.redis:
+            return bool(await self.redis.get(f"{self.token_blacklist_prefix}{token}"))
+        return bool(self._local_storage.get(f"{self.token_blacklist_prefix}{token}"))
 
     def generate_api_key(self) -> str:
         return secrets.token_urlsafe(32)
 
-    def store_api_key(self, api_key: str, user_id: str, expires_in_days: int = 30):
-        self.redis.setex(
-            f"api_key:{api_key}",
-            expires_in_days * 24 * 60 * 60,
-            user_id
-        )
+    async def store_api_key(
+        self,
+        api_key: str,
+        user_id: str,
+        expires_in_days: int = 30
+    ):
+        if self.redis:
+            await self.redis.setex(
+                f"api_key:{api_key}",
+                expires_in_days * 24 * 60 * 60,
+                user_id
+            )
+        else:
+            self._local_storage[f"api_key:{api_key}"] = user_id
 
     async def validate_api_key(self, api_key: str) -> Optional[str]:
-        return self.redis.get(f"api_key:{api_key}")
+        if self.redis:
+            return await self.redis.get(f"api_key:{api_key}")
+        return self._local_storage.get(f"api_key:{api_key}")
 
     async def revoke_api_key(self, api_key: str):
-        self.redis.delete(f"api_key:{api_key}")
+        if self.redis:
+            await self.redis.delete(f"api_key:{api_key}")
+        else:
+            self._local_storage.pop(f"api_key:{api_key}", None)
 
-    def rotate_secret_key(self) -> str:
-        new_key = secrets.token_urlsafe(64)
+    async def rotate_secret_key(self) -> str:
         old_key = settings.SECRET_KEY
+        new_key = secrets.token_urlsafe(64)
         settings.SECRET_KEY = new_key
         return old_key
 
     async def check_rate_limit(
-            self,
-            key: str,
-            limit: int,
-            window: int = 60
+        self,
+        key: str,
+        limit: int,
+        window: int = 60
     ) -> bool:
-        current = self.redis.get(f"{self.rate_limit_prefix}{key}")
-        if current and int(current) >= limit:
-            return False
+        async with self._lock:
+            if self.redis:
+                current = await self.redis.get(f"{self.rate_limit_prefix}{key}")
+                if current and int(current) >= limit:
+                    return False
 
-        pipe = self.redis.pipeline()
-        pipe.incr(f"{self.rate_limit_prefix}{key}")
-        pipe.expire(f"{self.rate_limit_prefix}{key}", window)
-        pipe.execute()
+                pipe = self.redis.pipeline()
+                pipe.incr(f"{self.rate_limit_prefix}{key}")
+                pipe.expire(f"{self.rate_limit_prefix}{key}", window)
+                await pipe.execute()
+            else:
+                current = self._local_storage.get(f"{self.rate_limit_prefix}{key}", 0)
+                if current >= limit:
+                    return False
+                self._local_storage[f"{self.rate_limit_prefix}{key}"] = current + 1
 
-        return True
+            return True
+
+    async def _store_token_metadata(self, token: str, user_id: str):
+        if self.redis:
+            await self.redis.setex(
+                f"token_meta:{token}",
+                settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                str(user_id)
+            )
