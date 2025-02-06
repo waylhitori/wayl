@@ -1,14 +1,21 @@
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from ..config.settings import settings
+from dotenv import load_dotenv
 
-engine = create_engine(settings.DATABASE_URL)
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL", None)
+if DATABASE_URL is None:
+    raise RuntimeError("DATABASE_URL environment variable is missing.")
+
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
-   db = SessionLocal()
-   try:
-       yield db
-   finally:
-       db.close()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
