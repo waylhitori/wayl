@@ -1,12 +1,10 @@
-
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, JSON, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
 Base = declarative_base()
-
 
 class User(Base):
     __tablename__ = "users"
@@ -20,7 +18,20 @@ class User(Base):
 
     agents = relationship("Agent", back_populates="owner")
     usage_records = relationship("UsageRecord", back_populates="user")
+    payments = relationship("PaymentRecord", back_populates="user")
 
+class PaymentRecord(Base):
+    __tablename__ = "payment_records"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"))
+    amount = Column(Float)
+    tx_hash = Column(String, unique=True)
+    description = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    status = Column(String, default="completed")  # pending, completed, failed
+
+    user = relationship("User", back_populates="payments")
 
 class Agent(Base):
     __tablename__ = "agents"
@@ -37,7 +48,6 @@ class Agent(Base):
     owner = relationship("User", back_populates="agents")
     conversations = relationship("Conversation", back_populates="agent")
 
-
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -47,7 +57,6 @@ class Conversation(Base):
 
     agent = relationship("Agent", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation")
-
 
 class Message(Base):
     __tablename__ = "messages"
@@ -59,7 +68,6 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
-
 
 class UsageRecord(Base):
     __tablename__ = "usage_records"
