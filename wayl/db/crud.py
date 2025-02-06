@@ -1,38 +1,71 @@
-
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from datetime import datetime, date
-from .models import User, Agent, Conversation, Message, UsageRecord
+from .models import User, Agent, Conversation, Message, UsageRecord, PaymentRecord
 from uuid import UUID
-
 
 async def get_user(user_id: UUID, db: Session) -> Optional[User]:
     return db.query(User).filter(User.id == str(user_id)).first()
 
+async def get_user_by_username(username: str, db: Session) -> Optional[User]:
+    return db.query(User).filter(User.username == username).first()
 
-async def create_agent(agent_data: dict, db: Session) -> Agent:
+async def create_agent(agent_data: Dict, db: Session) -> Agent:
     agent = Agent(**agent_data)
     db.add(agent)
     db.commit()
     db.refresh(agent)
     return agent
 
-
 async def get_agent(agent_id: str, db: Session) -> Optional[Agent]:
     return db.query(Agent).filter(Agent.id == agent_id).first()
-
 
 async def list_user_agents(user_id: UUID, db: Session) -> List[Agent]:
     return db.query(Agent).filter(Agent.owner_id == str(user_id)).all()
 
+async def count_user_agents(user_id: UUID, db: Session) -> int:
+    return db.query(Agent).filter(Agent.owner_id == str(user_id)).count()
 
-async def get_or_create_conversation(agent_id: str, db: Session) -> Conversation:
-    conversation = db.query(Conversation).filter(
-        Conversation.agent_id == agent_id
-    ).order_by(
-        Conversation.created_at.desc()
-    ).first()
+async def create_payment_record(
+    user_id: UUID,
+    amount: float,
+    tx_hash: str,
+    description: str,
+    db: Session
+) -> PaymentRecord:
+    record = PaymentRecord(
+        user_id=str(user_id),
+        amount=amount,
+        tx_hash=tx_hash,
+        description=description
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+async def get_user_payment_records(
+    user_id: UUID,
+    db: Session,
+    limit: int = 50,
+    offset: int = 0
+) -> List[PaymentRecord]:
+    return db.query(PaymentRecord)\
+        .filter(PaymentRecord.user_id == str(user_id))\
+        .order_by(PaymentRecord.created_at.desc())\
+        .offset(offset)\
+        .limit(limit)\
+        .all()
+
+async def get_or_create_conversation(
+    agent_id: str,
+    db: Session
+) -> Conversation:
+    conversation = db.query(Conversation)\
+        .filter(Conversation.agent_id == agent_id)\
+        .order_by(Conversation.created_at.desc())\
+        .first()
 
     if not conversation:
         conversation = Conversation(agent_id=agent_id)
@@ -42,12 +75,11 @@ async def get_or_create_conversation(agent_id: str, db: Session) -> Conversation
 
     return conversation
 
-
 async def save_message(
-        conversation_id: str,
-        role: str,
-        content: str,
-        db: Session
+    conversation_id: str,
+    role: str,
+    content: str,
+    db: Session
 ) -> Message:
     message = Message(
         conversation_id=conversation_id,
@@ -58,7 +90,6 @@ async def save_message(
     db.commit()
     db.refresh(message)
     return message
-
 
 async def get_today_usage(user_id: UUID, db: Session) -> UsageRecord:
     today = date.today()
@@ -77,11 +108,10 @@ async def get_today_usage(user_id: UUID, db: Session) -> UsageRecord:
 
     return record
 
-
 async def update_usage_record(
-        user_id: UUID,
-        tokens_used: int,
-        db: Session
+    user_id: UUID,
+    tokens_used: int,
+    db: Session
 ) -> UsageRecord:
     record = await get_today_usage(user_id, db)
     record.request_count += 1
@@ -90,14 +120,13 @@ async def update_usage_record(
     db.refresh(record)
     return record
 
-
 async def get_conversation_history(
-        conversation_id: str,
-        db: Session,
-        limit: int = 50
+    conversation_id: str,
+    db: Session,
+    limit: int = 50
 ) -> List[Message]:
-    return db.query(Message).filter(
-        Message.conversation_id == conversation_id
-    ).order_by(
-        Message.created_at.desc()
-    ).limit(limit).all()
+    return db.query(Message)\
+        .filter(Message.conversation_id == conversation_id)\
+        .order_by(Message.created_at.desc())\
+        .limit(limit)\
+        .all()
