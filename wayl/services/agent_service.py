@@ -11,6 +11,9 @@ from ..db.database import get_db
 from ..services.payment_service import PaymentService
 from ..core.model import ModelManager
 import asyncio
+from fastapi.responses import StreamingResponse
+import asyncio
+
 
 logger = logging.getLogger(__name__)
 
@@ -179,3 +182,60 @@ class AgentService:
             await model.load()
         except Exception as e:
             logger.warning(f"Model preloading failed: {str(e)}")
+
+
+async def generate_stream_response(
+        self,
+        agent_id: str,
+        message: str,
+        user_id: UUID
+) -> StreamingResponse:
+    try:
+        agent = await self._get_agent(agent_id, user_id)
+        await self.payment_service.check_user_limits(user_id)
+
+        async def response_generator():
+            conversation = await crud.get_or_create_conversation(agent_id, self.db)
+            response_queue = asyncio.Queue()
+
+            async def process_response():
+                try:
+                    response = await agent.generate_response(
+                        message,
+                        conversation.id,
+                        stream=True,
+                        response_queue=response_queue
+                    )
+                    await response_queue.put(None)  # Signal completion
+                except Exception as e:
+                    await response_queue.put(e)
+
+            # Start processing in background
+            asyncio.create_task(process_response())
+
+            # Stream responses
+            while True:
+                chunk = await response_queue.get()
+                if chunk is None:
+                    break
+                if isinstance(chunk, Exception):
+                    raise chunk
+                yield f"data: {chunk}\n\n"
+
+            # Update metrics after completion
+            input_tokens = len(message.split())
+            output_tokens = len("".join(response_queue.get_all()))
+            await self.payment_service.update_usage_metrics(
+                user_id,
+                input_tokens,
+                output_tokens
+            )
+
+        return StreamingResponse(
+            response_generator(),
+            media_type="text/event-stream"
+        )
+
+    except Exception as e:
+        logger.error(f"Stream response generation failed: {str(e)}")
+        raise
