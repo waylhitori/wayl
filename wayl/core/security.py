@@ -9,6 +9,11 @@ import logging
 from fastapi import HTTPException, status
 import asyncio
 
+import hashlib
+import bcrypt
+from typing import Optional
+import re
+
 logger = logging.getLogger(__name__)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -149,3 +154,46 @@ class SecurityManager:
                 settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
                 str(user_id)
             )
+
+    def validate_password_strength(self, password: str) -> bool:
+        """
+        Password must:
+        - Be at least 8 characters long
+        - Contain at least one uppercase letter
+        - Contain at least one lowercase letter
+        - Contain at least one number
+        - Contain at least one special character
+        """
+        if len(password) < 8:
+            return False
+        if not re.search(r"[A-Z]", password):
+            return False
+        if not re.search(r"[a-z]", password):
+            return False
+        if not re.search(r"\d", password):
+            return False
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+            return False
+        return True
+
+    def hash_api_key(self, api_key: str) -> str:
+        """Create a secure hash of the API key"""
+        return hashlib.blake2b(api_key.encode()).hexdigest()
+
+    async def rotate_all_user_tokens(self, user_id: str) -> None:
+        """Invalidate all tokens for a user"""
+        if self.redis:
+            pattern = f"user_token:{user_id}:*"
+            keys = await self.redis.keys(pattern)
+            if keys:
+                await self.redis.delete(*keys)
+
+    def generate_secure_token(self, length: int = 32) -> str:
+        """Generate a cryptographically secure token"""
+        return secrets.token_urlsafe(length)
+
+    def _hash_password(self, password: str) -> str:
+        """Internal method to hash passwords with bcrypt"""
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode(), salt).decode()
+
