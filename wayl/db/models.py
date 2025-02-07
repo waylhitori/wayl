@@ -19,6 +19,7 @@ class User(Base):
     agents = relationship("Agent", back_populates="owner")
     usage_records = relationship("UsageRecord", back_populates="user")
     payments = relationship("PaymentRecord", back_populates="user")
+    audit_logs = relationship("AuditLog", back_populates="user")
 
 class PaymentRecord(Base):
     __tablename__ = "payment_records"
@@ -79,3 +80,20 @@ class UsageRecord(Base):
     tokens_used = Column(Integer, default=0)
 
     user = relationship("User", back_populates="usage_records")
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    event_type = Column(String, index=True)
+    user_id = Column(String, ForeignKey("users.id"), index=True)
+    resource_type = Column(String, index=True)
+    resource_id = Column(String, index=True)
+    action = Column(String)
+    status = Column(String)
+    details = Column(JSON)
+    ip_address = Column(String)
+    user_agent = Column(String)
+
+    user = relationship("User", back_populates="audit_logs")
