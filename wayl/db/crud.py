@@ -130,3 +130,54 @@ async def get_conversation_history(
         .order_by(Message.created_at.desc())\
         .limit(limit)\
         .all()
+
+
+async def update_agent(agent_id: str, update_data: Dict, db: Session) -> Optional[Agent]:
+    agent = db.query(Agent).filter(Agent.id == agent_id)
+    if not agent.first():
+        return None
+
+    agent.update(update_data)
+    db.commit()
+    return agent.first()
+
+
+async def delete_agent(agent_id: str, db: Session) -> bool:
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+    if not agent:
+        return False
+
+    db.delete(agent)
+    db.commit()
+    return True
+
+
+async def get_user_by_email(email: str, db: Session) -> Optional[User]:
+    return db.query(User).filter(User.email == email).first()
+
+
+async def update_user(user_id: UUID, update_data: Dict, db: Session) -> Optional[User]:
+    user = db.query(User).filter(User.id == str(user_id))
+    if not user.first():
+        return None
+
+    user.update(update_data)
+    db.commit()
+    return user.first()
+
+
+async def get_user_by_token(token: str, db: Session) -> Optional[User]:
+    try:
+        from ..core.security import SecurityManager
+        security = SecurityManager()
+        payload = await security.verify_token(token)
+        if not payload:
+            return None
+
+        user_id = payload.get("sub")
+        if not user_id:
+            return None
+
+        return await get_user(UUID(user_id), db)
+    except Exception:
+        return None
